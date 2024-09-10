@@ -367,10 +367,11 @@ def dndt_dyn(
     DM_switch=False, DM_args=None, f_suppress=False
 ):
     rho = n * (phys.rho_DM + phys.rho_baryon) / phys.nH # assuming baryon and DM evolution is still coupled!!!
-    tdyn = t_dyn(
-        rho, xe, xH2, T, n, rs, H2_cool_rate=H2_cool_rate, 
-        DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
-    )
+    # tdyn = t_dyn(
+    #     rho, xe, xH2, T, n, rs, H2_cool_rate=H2_cool_rate, 
+    #     DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
+    # )
+    tdyn = t_ff(rho)
     return n / tdyn
 
 def dlog_n_dz(n, dndt, rs):
