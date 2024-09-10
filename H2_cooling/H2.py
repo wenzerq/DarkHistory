@@ -21,6 +21,7 @@ hplanck = hbar * 2*np.pi
 c = phys.c
 m_e = phys.me
 nH = phys.nH
+g_per_eV = phys.ele * 1e3 / (phys.c / 100)**2
 g_per_Msun = 1.989e33
 cm_per_kpc = 3.086e21  
 
@@ -137,7 +138,7 @@ def dxH2_dt_IGM(xHII, xHeII, xHeIII, T_m, rs, dists=0): # s^-1
     rate_dest = 0
     return rate_form + rate_dest
 
-def dxH2_dz(xe, xH2, Tm, n, rs, dists=0, LW=False): # s^-1
+def dlog_xH2_dz(xe, xH2, Tm, n, rs, dists=0, LW=False): # s^-1
     """Rate of xH2 formation from the H- pathway in terms of redshift.
  
     Parameters
@@ -169,10 +170,10 @@ def dxH2_dz(xe, xH2, Tm, n, rs, dists=0, LW=False): # s^-1
         rate_dest = kH2(dists, rs) * xH2
     else:
         rate_dest = 0
-    return (rate_form - rate_dest) * phys.dtdz(rs)
+    return (rate_form - rate_dest) * phys.dtdz(rs) / xH2
 
 # H2 formation rate from Tegmark et al
-def dxH2_dz2(xe, xH2, T, n, rs): # s^-1
+def dlog_xH2_dz2(xe, xH2, T, n, rs): # s^-1
     Tm = T / phys.kB
     TCMB = phys.TCMB(rs) / phys.kB
     k2=1.83e-18*Tm**0.88
@@ -184,7 +185,7 @@ def dxH2_dz2(xe, xH2, T, n, rs): # s^-1
     km = (
         k2 * k3 / (k3 + k4/(1-xe)/n) + k5 * k6 / (k6 + k7/(1-xe)/n)
     )
-    return km * n*(1-xe-2*xH2)*xe * phys.dtdz(rs)
+    return km * n*(1-xe-2*xH2)*xe * phys.dtdz(rs) / xH2
 
 # Ionization equation from Tegmark et al
 # def dxe_dz(xe, T, n, rs):
@@ -195,7 +196,7 @@ def dxH2_dz2(xe, xH2, T, n, rs): # s^-1
 #     ) * phys.dtdz(rs)
 
 # Ionization equation taken from DarkHistory
-def dxe_dz(xe, T, n, rs, DM_switch=False, DM_args=None, f_suppress=False):
+def dlog_xe_dz(xe, T, n, rs, DM_switch=False, DM_args=None, f_suppress=False):
     peebC = phys.peebles_C(xe, rs)
     alpha = phys.alpha_recomb(T, 'HI')
     beta_ion = phys.beta_ion(T, 'HI')
@@ -221,24 +222,27 @@ def dxe_dz(xe, T, n, rs, DM_switch=False, DM_args=None, f_suppress=False):
          - 4 * beta_ion * (1-xe)
          * np.exp(-phys.lya_eng/phys.TCMB(rs))
      ) + dm_term
-    ) * phys.dtdz(rs)
+    ) * phys.dtdz(rs) / xe
 
-def dTm_dz(xe, xH2, T, n, dndt, rs, vir_switch=False, H2_cool_rate='new', DM_switch=False, DM_args=None, f_suppress=False):
-    Tm = T / phys.kB
-    T3 = Tm / 1e3
-    TCMB = phys.TCMB(rs) / phys.kB
-    
+def dTm_dt_adia(Tm, dndt, n):
     adiabatic = (2/3) * Tm * dndt / n # K/s
-    compton = xe * (4.91e-22 * TCMB**4) * (TCMB - Tm) # K/s
+    return phys.kB * adiabatic
 
+def dTm_dt_comp(xe, TCMB, Tm):
+    compton = xe * (4.91e-22 * TCMB**4) * (TCMB - Tm) # K/s
+    return phys.kB * compton
+
+def dTm_dt_line(n, xe, Tm, TCMB):
     # Expression below updated to use Eqn 15a from Cen 1992
     # Only differs from Dalgarno+McCray 1972 for T >~ 1e5 K
     line = - (
         7.5e-19 * n**2 * xe * (1-xe) * (np.exp(-118348/Tm) - np.exp(-118348/TCMB)) / (1 + np.sqrt(Tm/1e5)) # erg / cm^3 / s
         * 1e-7 / phys.ele / phys.kB # K / erg
         / (3/2 * n * (1 + phys.chi + xe)) # cm^3
-    ) 
-    
+    )
+    return phys.kB * line
+
+def dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress):    
     if DM_switch:
         mDM, inj_param, inj_type, inj_particle, f_data = DM_args
         n_IGM = phys.nH * rs**3
@@ -249,7 +253,9 @@ def dTm_dz(xe, xH2, T, n, dndt, rs, vir_switch=False, H2_cool_rate='new', DM_swi
             dm_term *= n_IGM / n
     else:
         dm_term = 0
-    
+    return dm_term
+
+def dTm_dt_H2(xH2, T, T3, Tm, n, H2_cool_rate):
     # OPTIONS FOR MOLECULAR COOLING RATE
     # From Tegmark et al
     # H2 = - Tm * (1 + 10*T3**(7/2)/(60+T3**4)) * (xH2/n) * np.exp(-512/Tm) / (48200 * 365 * 24 * 3600) # K/s
@@ -291,38 +297,61 @@ def dTm_dz(xe, xH2, T, n, dndt, rs, vir_switch=False, H2_cool_rate='new', DM_swi
         )
     else:
         print("Need to specify H2 cooling rate.")
+    return phys.kB * H2
+
+def dlog_Tm_dz(
+        xe, xH2, T, n, dndt, rs, 
+        vir_switch=False, H2_cool_rate='new', 
+        DM_switch=False, DM_args=None, f_suppress=False,
+        just_cooling=False
+    ):
+    Tm = T / phys.kB
+    T3 = Tm / 1e3
+    TCMB = phys.TCMB(rs) / phys.kB
+    
+    adiabatic = dTm_dt_adia(Tm, dndt, n) # eV/s
+    compton = dTm_dt_comp(xe, TCMB, Tm) # eV/s
+    line = dTm_dt_line(n, xe, Tm, TCMB) # eV/s
+    dm_term = dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress) # eV/s
+    H2 = dTm_dt_H2(xH2, T, T3, Tm, n, H2_cool_rate) # eV/s
     
     # After virialization, turn off compton cooling
     # Gives conservative estimate for critical T_vir/M_halo for collapse
     if not vir_switch:
-        return phys.kB * (adiabatic + compton + line + dm_term / phys.kB + H2) * phys.dtdz(rs)
+        if just_cooling:
+            return (compton + line + dm_term + H2) * phys.dtdz(rs) / T
+        else:
+            return (adiabatic + compton + line + dm_term + H2) * phys.dtdz(rs) / T
     else:
-        return phys.kB * (adiabatic + line + dm_term / phys.kB + H2) * phys.dtdz(rs)
+        if just_cooling:
+            return (line + dm_term + H2) * phys.dtdz(rs) / T
+        else:
+            return (adiabatic + line + dm_term + H2) * phys.dtdz(rs) / T
     
     
 ##############################################
 ##############################################
-# Fitting functions for top-hat halo profile #
+# Densities                                  #
 ##############################################
 ##############################################
 
 rho_DM = phys.rho_DM
 rho_baryon = phys.rho_baryon
 
-# Total energy density in matter [eV / cm^3]
+# Total energy density in matter for top-hat [eV / cm^3]
 @njit
 def rho_TH(rs, rs_vir):
     A = rs_vir/rs
     rho_0 = rho_DM + rho_baryon
     return rho_0 * rs**3 * np.exp(1.9*A / (1-0.75*A**2)) # sign error in Eqn 23 of astro-ph/9603007??
 
-# Number density of hydrogen nuclei [cm^-3]
+# Number density of hydrogen nuclei for top-hat [cm^-3]
 @njit
 def n_TH(rs, rs_vir):
     norm_fac = nH / (rho_DM + rho_baryon)
     return norm_fac * rho_TH(rs, rs_vir)
 
-# Time derivative of number density of hydrogen nuclei [cm^-3 s^-1]
+# Time derivative of number density of hydrogen nuclei for top-hat [cm^-3 s^-1]
 def dn_dt_TH(rs, rs_vir):
     if isinstance(rs, float):
         rs_pert = np.array([1.001*rs, 0.999*rs])
@@ -331,19 +360,36 @@ def dn_dt_TH(rs, rs_vir):
     else:
         n_interp = UnivariateSpline(rs[::-1], n_TH(rs, rs_vir)[::-1])
         return n_interp.derivative()(rs) / phys.dtdz(rs)
+
+# Time derivative of hydrogen number density [eV / cm^3 / s]
+def dndt_dyn(
+    xe, xH2, T, n, rs, H2_cool_rate='new', 
+    DM_switch=False, DM_args=None, f_suppress=False
+):
+    rho = n * (phys.rho_DM + phys.rho_baryon) / phys.nH # assuming baryon and DM evolution is still coupled!!!
+    tdyn = t_dyn(
+        rho, xe, xH2, T, n, rs, H2_cool_rate=H2_cool_rate, 
+        DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
+    )
+    return n / tdyn
+
+def dlog_n_dz(n, dndt, rs):
+    return dndt * phys.dtdz(rs) / n
     
 
 ##############################################
 ##############################################
-# Halo integration and virialization         #
+# Virialization                              #
 ##############################################
 ##############################################
     
 # Virialized quantities
 def rho_vir(rs): 
     return 18*np.pi**2 * (phys.rho_DM + phys.rho_baryon) * rs**3
+
 # def T_vir(rs, M):
 #     return 485 * phys.h**(2/3) * (M / 1e4)**(2/3) * (rs / 100) * phys.kB
+
 def T_vir(rs, M, mu=0.6, OmM=phys.omega_m):
     return (
         phys.G * phys.mp / 2 / phys.kB / phys.c**2
@@ -378,7 +424,7 @@ def rho_pres(rs, M):
 
 # Conditions for virialization
 def vir_event(rs, var, rs_vir, M):
-    xe, xH2, Tm = var
+    xe, xH2, Tm = np.exp(var)
     rho = rho_TH(np.array(rs), rs_vir)
     T_cond = T_vir(rs_vir, M)
     rho_cond = rho_vir(rs_vir)
@@ -396,8 +442,70 @@ def vir_event(rs, var, rs_vir, M):
         return 1
 vir_event.terminal = True
 
+##############################################
+##############################################
+# Timescales                                 #
+##############################################
+##############################################
+
+# Free fall time scale [s]
+def t_ff(rho):
+    return np.sqrt(3*np.pi / 32 / phys.G / rho / g_per_eV)
+
+# Cooling timescale [s]
+def t_cool(xe, xH2, T, n, rs, H2_cool_rate='new'):
+    Tm = T / phys.kB
+    T3 = Tm / 1e3
+    TCMB = phys.TCMB(rs)
+
+    compton = dTm_dt_comp(xe, TCMB, Tm) # eV/s
+    line = dTm_dt_line(n, xe, Tm, TCMB) # eV/s
+    H2 = dTm_dt_H2(xH2, T, T3, Tm, n, H2_cool_rate) # eV/s
+
+    return - T / (compton+line+H2)
+
+# Heating timescale [s]
+def t_heat(rs, xe, T, n, DM_switch=False, DM_args=None, f_suppress=False):
+    return - T / dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress)
+
+# Collapse/dynamical timescale [s]
+def t_dyn(
+    rho, xe, xH2, T, n, rs, H2_cool_rate='new', 
+    DM_switch=False, DM_args=None, f_suppress=False
+):
+    T_ff = t_ff(rho)
+    T_cool = t_cool(xe, xH2, T, n, rs, H2_cool_rate)
+    T_heat = t_heat(rs, xe, T, n, DM_args=DM_args, DM_switch=DM_switch, f_suppress=f_suppress)
+    T_net = 1 / ((1/T_cool) + (1/T_heat))
+
+    t_final = T_ff
+    if isinstance(t_final, float) and (abs(T_net) > T_ff):
+        t_final = T_net
+    else:
+        t_final[abs(T_net) > T_ff] = T_net[abs(T_net) > T_ff]
+
+    # # If fastest rate is heating, gas puffs up
+    # puff_mask = np.array((T_heat < T_cool)*(T_heat < T_ff), dtype='bool')
+    # t_final[puff_mask] = -1
+
+    # # Else, if cooling is faster, then gas collapses like free fall
+    # ff_mask = np.array((1-puff_mask)*(T_cool < T_ff), dtype='bool')
+    # t_final[ff_mask] = T_ff[ff_mask]
+
+    # # Else, gas collapses but with some pressure?
+    # pres_mask = np.array((1-puff_mask)*(1-ff_mask), dtype='bool')
+    # t_final[pres_mask] = np.minimum(T_cool, T_heat)[pres_mask]
+
+    return t_final
+
+##############################################
+##############################################
+# Halo integration                           #
+##############################################
+##############################################
+
 # Evolution equations all together
-def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, nvir=None, dists=0,
+def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, dists=0,
               H2_form_rate='new', H2_cool_rate='new', DM_switch=False, DM_args=None, 
               f_suppress=False, LW=False):
     """Top-hat halo evolution equations
@@ -409,7 +517,8 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, nvir=None, dist
     var : ndarray of floats
         Variables to evolve. 
         If early==True, this is just xH2.
-        If early==False, this is [xe, xH2, Tm].
+        If early==False and vir_switch=False, this is [xe, xH2, Tm].
+        If early==False and vir_switch=True, this is [xe, xH2, Tm, n].
     rs_vir : float
         virialization redshift
     M : float
@@ -420,8 +529,6 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, nvir=None, dist
     vir_switch : bool
         If this flag is true, halo should be evolved assuming it is 
         virialized, i.e. density is held constant.
-    nvir : float
-        If vir_switch==True, this is the virialized density to use.
     dists : float or Spectrum
         dNdE spectrum of nonthermal distortion to CMB blackbody at rs; 
         0 if there is no distortion
@@ -461,9 +568,9 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, nvir=None, dist
     
     # Determine which H2 formation rate to use
     if H2_form_rate=='new':
-        dxH2_dz_at_rs = lambda xe, xH2, Tm, n : dxH2_dz(xe, xH2, Tm, n, rs, dists=dists, LW=LW)
+        dlog_xH2_dz_at_rs = lambda xe, xH2, Tm, n : dlog_xH2_dz(xe, xH2, Tm, n, rs, dists=dists, LW=LW)
     elif H2_form_rate=='old':
-        dxH2_dz_at_rs = lambda xe, xH2, Tm, n : dxH2_dz2(xe, xH2, Tm, n, rs)
+        dlog_xH2_dz_at_rs = lambda xe, xH2, Tm, n : dlog_xH2_dz2(xe, xH2, Tm, n, rs)
     else:
         print("Need to specify H2 formation rate.")
     
@@ -471,35 +578,36 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, nvir=None, dist
     if early:
         xe = phys.x_std(rs)
         Tm = phys.Tm_std(rs)
-        xH2 = var
+        xH2 = np.exp(var)
         n = n_TH(np.array(rs), rs_vir)
-        return dxH2_dz_at_rs(xe, xH2, Tm, n)
+        return dlog_xH2_dz_at_rs(xe, xH2, Tm, n)
     
     # Later redshifts, before virialization
     if not vir_switch:
-        xe, xH2, Tm = var
+        xe, xH2, Tm = np.exp(var)
         n = n_TH(np.array(rs), rs_vir)
         dndt = dn_dt_TH(rs, rs_vir)
         return np.array([
-            dxe_dz(xe, Tm, n, rs, DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
-            dxH2_dz_at_rs(xe, xH2, Tm, n),
-            dTm_dz(xe, xH2, Tm, n, dndt, rs, H2_cool_rate=H2_cool_rate, 
+            dlog_xe_dz(xe, Tm, n, rs, DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+            dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
+            dlog_Tm_dz(xe, xH2, Tm, n, dndt, rs, H2_cool_rate=H2_cool_rate, 
                    DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress)
         ])
     
-    # After virizialization. Must provide virialized density, nvir.
+    # After virizialization.
     else:
-        xe, xH2, Tm = var
-        if nvir==None:
-            raise ValueError(
-                'Need to provide virialized density, nvir.'
-            )
+        xe, xH2, Tm, n = np.exp(var)
+        dndt = dndt_dyn(
+            xe, xH2, Tm, n, rs, H2_cool_rate='new', 
+            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
+        )
         return np.array([
-            dxe_dz(xe, Tm, nvir, rs, 
+            dlog_xe_dz(xe, Tm, n, rs, 
                    DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
-            dxH2_dz_at_rs(xe, xH2, Tm, nvir),
-            dTm_dz(xe, xH2, Tm, nvir, 0, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
-                   DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress)
+            dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
+            dlog_Tm_dz(xe, xH2, Tm, n, 0, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
+                   DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+            dlog_n_dz(n, dndt, rs)
         ])
 
 # Integration, with the virialization conditions
@@ -566,8 +674,9 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
                            init_H2, t_eval=high_rs_list, rtol=1e-10, atol=1e-10)
     y_early = np.array([
         phys.x_std(early_soln['t']),
-        early_soln['y'][0],
-        phys.Tm_std(early_soln['t'])
+        np.exp(early_soln['y'][0]),
+        phys.Tm_std(early_soln['t']),
+        n_TH(early_soln['t'], rs_vir)
     ])
     # print(f"Is the integration at recombination good?  {early_soln['success']}")
     if not early_soln['success']:
@@ -582,6 +691,7 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
     halo_event.terminal = True
     halo_soln = solve_ivp(halo_eqns, [rs_list[0], rs_list[-1]], 
                           init_cond, t_eval=rs_list, rtol=1e-10, atol=1e-10, events=halo_event)
+    y_mid = np.vstack((np.exp(halo_soln['y']), n_TH(halo_soln['t'], rs_vir))) # add on density
     # print(f"Is the integration before virialization good?  {halo_soln['success']}")
     if not halo_soln['success']:
         print(halo_soln['message'])
@@ -592,9 +702,8 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
         T_next = T_vir(rs_vir, M_halo)
     else:
         T_next = halo_soln['y'][2,-1]
-    init_cond_vir = [halo_soln['y'][0,-1], halo_soln['y'][1,-1], T_next]
-    nvir = n_TH(halo_soln['t_events'][0][0], rs_vir)
-    halo_eqns_vir = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, vir_switch=True, nvir=nvir, 
+    init_cond_vir = [y_mid[0,-1], y_mid[1,-1], T_next, y_mid[3,-1]]
+    halo_eqns_vir = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, vir_switch=True,
                                               dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
                                               DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW)
     halo_soln_vir = solve_ivp(halo_eqns_vir, [rs_list_vir[0], rs_list_vir[-1]], 
@@ -605,11 +714,7 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
     
     # Stitch solutions together
     t_full = np.hstack((early_soln['t'], halo_soln['t'], halo_soln_vir['t']))
-    y_full = np.hstack((y_early, halo_soln['y'], halo_soln_vir['y']))
-    n_full = np.hstack((n_TH(early_soln['t'], rs_vir), 
-                        n_TH(halo_soln['t'], rs_vir), 
-                        np.ones_like(rs_list_vir)*nvir))
-    y_full = np.vstack((y_full, n_full))
+    y_full = np.hstack((y_early, y_mid, np.exp(halo_soln_vir['y'])))
     result = {
         't' : t_full,
         'y' : y_full
