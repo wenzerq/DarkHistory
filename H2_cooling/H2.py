@@ -479,8 +479,10 @@ def t_dyn(
     T_net = 1 / ((1/T_cool) + (1/T_heat))
 
     t_final = T_ff
-    if isinstance(t_final, float) and (abs(T_net) > T_ff):
-        t_final = T_net
+
+    if isinstance(t_final, float):
+        if (abs(T_net) > T_ff):
+            t_final = T_net
     else:
         t_final[abs(T_net) > T_ff] = T_net[abs(T_net) > T_ff]
 
@@ -611,7 +613,7 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, dists=0,
         ])
 
 # Integration, with the virialization conditions
-def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=900., dists=0,
+def halo_integrate(rs_vir, M_halo, init_log_H2, start_rs=3000., end_rs=5., early_rs=900., dists=0,
                   H2_form_rate='new', H2_cool_rate='new', DM_switch=False, DM_args=None, 
                   f_suppress=False, LW=False):
     """Get the evolution of a top-hat halo
@@ -622,7 +624,7 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
         virialization redshift
     M_halo : float
         Halo mass
-    init_H2 : ndarray of float
+    init_log_H2 : ndarray of float
         initial condition for xH2
     start_rs : float
         Starting redshift for evolution
@@ -671,7 +673,7 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
                                            dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
                                            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress)
     early_soln = solve_ivp(early_eqns, [high_rs_list[0], high_rs_list[-1]], 
-                           init_H2, t_eval=high_rs_list, rtol=1e-10, atol=1e-10)
+                           init_log_H2, t_eval=high_rs_list, rtol=1e-10, atol=1e-10)
     y_early = np.array([
         phys.x_std(early_soln['t']),
         np.exp(early_soln['y'][0]),
@@ -683,7 +685,7 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
         print(early_soln['message'])
     
     # Before virialization
-    init_cond = [phys.x_std(rs_list[0]), early_soln['y'][0,-1], phys.Tm_std(rs_list[0])]
+    init_cond = [np.log(phys.x_std(rs_list[0])), early_soln['y'][0,-1], np.log(phys.Tm_std(rs_list[0]))]
     halo_eqns = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, vir_switch=False, 
                                           dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
                                           DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW)
@@ -698,11 +700,11 @@ def halo_integrate(rs_vir, M_halo, init_H2, start_rs=3000., end_rs=5., early_rs=
     
     # After virialization
     rs_list_vir = 10**np.arange(np.log10(halo_soln['t'][-1])-0.01, np.log10(end_rs), -0.01)
-    if T_vir(rs_vir, M_halo) > halo_soln['y'][2,-1]:
-        T_next = T_vir(rs_vir, M_halo)
+    if T_vir(rs_vir, M_halo) > np.exp(halo_soln['y'][2,-1]):
+        log_T_next = np.log(T_vir(rs_vir, M_halo))
     else:
-        T_next = halo_soln['y'][2,-1]
-    init_cond_vir = [y_mid[0,-1], y_mid[1,-1], T_next, y_mid[3,-1]]
+        log_T_next = halo_soln['y'][2,-1]
+    init_cond_vir = [halo_soln['y'][0,-1], halo_soln['y'][1,-1], log_T_next, np.log(y_mid[3,-1])]
     halo_eqns_vir = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, vir_switch=True,
                                               dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
                                               DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW)
@@ -745,12 +747,12 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
     
     for ii, rs_vir in enumerate(tqdm(rs_vir_list)):
         #print(f"1+z_vir = {rs_vir:.0f}")
-        init_H2 = [0]
+        init_log_H2 = [-20]
         
         T_high = 3e4 * phys.kB
         M_halo_high = M_given_T(rs_vir, T_high)
         test_high, rs_vir_high = halo_integrate(
-            rs_vir, M_halo_high, init_H2, start_rs=2000., end_rs=0.65*rs_vir,
+            rs_vir, M_halo_high, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
             dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
             DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
         )
@@ -761,7 +763,7 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
         try:
             M_halo_low  = M_given_T(rs_vir, T_low)
             test_low, rs_vir_low = halo_integrate(
-                rs_vir, M_halo_low, init_H2, start_rs=2000., end_rs=0.65*rs_vir,
+                rs_vir, M_halo_low, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
                 dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
                 DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
             )
@@ -769,7 +771,7 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
             T_low *= 2
             M_halo_low  = M_given_T(rs_vir, T_low)
             test_low, rs_vir_low = halo_integrate(
-                rs_vir, M_halo_low, init_H2, start_rs=2000., end_rs=0.65*rs_vir,
+                rs_vir, M_halo_low, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
                 dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
                 DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
             )
@@ -787,7 +789,7 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
                 M_halo_mid = np.sqrt(M_halo_high * M_halo_low)
                 #print(f"Trying T_vir = {T_vir(rs_vir, M_halo_mid)/phys.kB:.0f} K")
                 test_mid, rs_vir_mid = halo_integrate(
-                    rs_vir, M_halo_mid, init_H2, start_rs=2000., end_rs=0.65*rs_vir,
+                    rs_vir, M_halo_mid, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
                     dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
                     DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
                 )
