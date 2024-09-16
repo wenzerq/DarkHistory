@@ -314,7 +314,7 @@ def dlog_Tm_dz(
     line = dTm_dt_line(n, xe, Tm, TCMB) # eV/s
     dm_term = dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress) # eV/s
     H2 = dTm_dt_H2(xH2, T, T3, Tm, n, H2_cool_rate) # eV/s
-    
+
     # After virialization, turn off compton cooling
     # Gives conservative estimate for critical T_vir/M_halo for collapse
     if not vir_switch:
@@ -326,6 +326,11 @@ def dlog_Tm_dz(
         if just_cooling:
             return (line + dm_term + H2) * phys.dtdz(rs) / T
         else:
+            # print("post vir")
+            # print(f"{rs:.2f}, {adiabatic:.2E}, {line:.2E}, {dm_term:.2E}, {H2:.2E}")
+            # print(f"{(adiabatic + line + dm_term + H2):.2E}")
+            # print(f"{(adiabatic + line + dm_term + H2) * phys.dtdz(rs):.2E}")
+            # print(f"{(adiabatic + line + dm_term + H2) * phys.dtdz(rs) / T:.2E}")
             return (adiabatic + line + dm_term + H2) * phys.dtdz(rs) / T
     
     
@@ -371,7 +376,7 @@ def dndt_dyn(
     #     rho, xe, xH2, T, n, rs, H2_cool_rate=H2_cool_rate, 
     #     DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
     # )
-    tdyn = t_ff(rho)
+    tdyn = t_ff(rho) * 2 # WQ debug factor
     return n / tdyn
 
 def dlog_n_dz(n, dndt, rs):
@@ -604,11 +609,18 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, dists=0,
             xe, xH2, Tm, n, rs, H2_cool_rate='new', 
             DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
         )
+        # print(rs,
+        #     dlog_xe_dz(xe, Tm, n, rs, 
+        #            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+        #     dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
+        #     dlog_Tm_dz(xe, xH2, Tm, n, dndt, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
+        #            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+        #     dlog_n_dz(n, dndt, rs))
         return np.array([
             dlog_xe_dz(xe, Tm, n, rs, 
                    DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
             dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
-            dlog_Tm_dz(xe, xH2, Tm, n, 0, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
+            dlog_Tm_dz(xe, xH2, Tm, n, dndt, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
                    DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
             dlog_n_dz(n, dndt, rs)
         ])
@@ -700,7 +712,7 @@ def halo_integrate(rs_vir, M_halo, init_log_H2, start_rs=3000., end_rs=5., early
         print(halo_soln['message'])
     
     # After virialization
-    rs_list_vir = 10**np.arange(np.log10(halo_soln['t'][-1])-0.01, np.log10(end_rs), -0.01)
+    rs_list_vir = 10**np.arange(np.log10(halo_soln['t'][-1])-0.01, np.log10(end_rs), -0.0001)
     if T_vir(rs_vir, M_halo) > np.exp(halo_soln['y'][2,-1]):
         log_T_next = np.log(T_vir(rs_vir, M_halo))
     else:
