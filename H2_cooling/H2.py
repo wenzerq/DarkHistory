@@ -508,6 +508,45 @@ def t_dyn(
 
 ##############################################
 ##############################################
+# Stability scales                           #
+##############################################
+##############################################
+
+# Radius of gas cloud above which is gravitationally unstable [cm]
+# Derived by applying virial thm to spherical top-hat
+# Not the pants inseam
+def Jeans_length(T, rho, mu=0.6):
+    return np.sqrt(
+        15 * T / 4 / np.pi / phys.G / mu / phys.mp / rho # g * s^2 / eV
+        / g_per_eV # eV / g
+    ) * phys.c # convert s to cm
+
+# Mass of gas cloud above which is gravitationally unstable [M_\odot]
+# This must be related to the function M_given_T?
+def Jeans_mass(T, rho, mu=0.6):
+    return (
+        4 * np.pi / 3 * rho * Jeans_length(T, rho, mu)**3 # eV
+        * g_per_eV / g_per_Msun # Msun / eV
+    )
+
+# Bonnor-Ebert scale [cm]
+def BonnorEbert_length(T, rho, mu=0.6):
+    return (
+        (3 / 4 / np.pi * 225 / 32 / np.sqrt(5 * np.pi))**(1/3)
+        * Jeans_length(T, rho, mu)
+    )
+
+# Bonnor-Ebert mass [M_\odot]
+# Wikipedia expression
+def BonnorEbert_mass(T, rho, mu=0.6):
+    return (
+        225 / 32 / np.sqrt(5 * np.pi) 
+        * rho * Jeans_length(T, rho, mu)**3 # eV
+        * g_per_eV / g_per_Msun # Msun / eV
+    )
+
+##############################################
+##############################################
 # Halo integration                           #
 ##############################################
 ##############################################
