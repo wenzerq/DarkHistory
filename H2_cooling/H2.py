@@ -196,12 +196,12 @@ def dlog_xH2_dz2(xe, xH2, T, n, rs): # s^-1
 #     ) * phys.dtdz(rs)
 
 # Ionization equation taken from DarkHistory
-def dlog_xe_dz(xe, T, n, rs, DM_switch=False, DM_args=None, f_suppress=False):
+def dlog_xe_dz(xe, T, n, rs, DM_switch=False, ion_switch=True, DM_args=None, f_suppress=False):
     peebC = phys.peebles_C(xe, rs)
     alpha = phys.alpha_recomb(T, 'HI')
     beta_ion = phys.beta_ion(T, 'HI')
     
-    if DM_switch:
+    if DM_switch and ion_switch:
         n_IGM = phys.nH * rs**3
         mDM, inj_param, inj_type, inj_particle, f_data = DM_args
         f_H_ion = f_data['H ion'] #phys.f_std(mDM, rs, inj_particle=inj_particle, inj_type=inj_type, channel='H ion')
@@ -242,8 +242,8 @@ def dTm_dt_line(n, xe, Tm, TCMB):
     )
     return phys.kB * line
 
-def dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress):    
-    if DM_switch:
+def dTm_dt_DM(rs, xe, n, DM_args, DM_switch, heat_switch, f_suppress):    
+    if DM_switch and heat_switch:
         mDM, inj_param, inj_type, inj_particle, f_data = DM_args
         n_IGM = phys.nH * rs**3
         f_heat = f_data['heat'] #phys.f_std(mDM, rs, inj_particle=inj_particle, inj_type=inj_type, channel='heat')
@@ -302,7 +302,7 @@ def dTm_dt_H2(xH2, T, T3, Tm, n, H2_cool_rate):
 def dlog_Tm_dz(
         xe, xH2, T, n, dndt, rs, 
         vir_switch=False, H2_cool_rate='new', 
-        DM_switch=False, DM_args=None, f_suppress=False,
+        DM_switch=False, heat_switch=True, DM_args=None, f_suppress=False,
         just_cooling=False
     ):
     Tm = T / phys.kB
@@ -312,7 +312,7 @@ def dlog_Tm_dz(
     adiabatic = dTm_dt_adia(Tm, dndt, n) # eV/s
     compton = dTm_dt_comp(xe, TCMB, Tm) # eV/s
     line = dTm_dt_line(n, xe, Tm, TCMB) # eV/s
-    dm_term = dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress) # eV/s
+    dm_term = dTm_dt_DM(rs, xe, n, DM_args, DM_switch, heat_switch, f_suppress) # eV/s
     H2 = dTm_dt_H2(xH2, T, T3, Tm, n, H2_cool_rate) # eV/s
 
     # After virialization, turn off compton cooling
@@ -369,14 +369,14 @@ def dn_dt_TH(rs, rs_vir):
 # Time derivative of hydrogen number density [eV / cm^3 / s]
 def dndt_dyn(
     xe, xH2, T, n, rs, H2_cool_rate='new', 
-    DM_switch=False, DM_args=None, f_suppress=False
+    DM_switch=False, heat_switch=True, DM_args=None, f_suppress=False
 ):
     rho = n * (phys.rho_DM + phys.rho_baryon) / phys.nH # assuming baryon and DM evolution is still coupled!!!
     # tdyn = t_dyn(
     #     rho, xe, xH2, T, n, rs, H2_cool_rate=H2_cool_rate, 
-    #     DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
+    #     DM_switch=DM_switch, heat_switch=heat_switch, DM_args=DM_args, f_suppress=f_suppress
     # )
-    tdyn = t_ff(rho) * 2 # WQ debug factor
+    tdyn = t_ff(rho) # WQ debug factor
     return n / tdyn
 
 def dlog_n_dz(n, dndt, rs):
@@ -471,17 +471,20 @@ def t_cool(xe, xH2, T, n, rs, H2_cool_rate='new'):
     return - T / (compton+line+H2)
 
 # Heating timescale [s]
-def t_heat(rs, xe, T, n, DM_switch=False, DM_args=None, f_suppress=False):
-    return - T / dTm_dt_DM(rs, xe, n, DM_args, DM_switch, f_suppress)
+def t_heat(rs, xe, T, n, DM_switch=False, heat_switch=True, DM_args=None, f_suppress=False):
+    return - T / dTm_dt_DM(rs, xe, n, DM_args, DM_switch, heat_switch, f_suppress)
 
 # Collapse/dynamical timescale [s]
 def t_dyn(
     rho, xe, xH2, T, n, rs, H2_cool_rate='new', 
-    DM_switch=False, DM_args=None, f_suppress=False
+    DM_switch=False, heat_switch=True, DM_args=None, f_suppress=False
 ):
     T_ff = t_ff(rho)
     T_cool = t_cool(xe, xH2, T, n, rs, H2_cool_rate)
-    T_heat = t_heat(rs, xe, T, n, DM_args=DM_args, DM_switch=DM_switch, f_suppress=f_suppress)
+    T_heat = t_heat(
+        rs, xe, T, n, DM_args=DM_args, DM_switch=DM_switch, 
+        heat_switch=heat_switch, f_suppress=f_suppress
+    )
     T_net = 1 / ((1/T_cool) + (1/T_heat))
 
     t_final = T_ff
@@ -554,7 +557,7 @@ def BonnorEbert_mass(T, rho, mu=0.6):
 # Evolution equations all together
 def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, dists=0,
               H2_form_rate='new', H2_cool_rate='new', DM_switch=False, DM_args=None, 
-              f_suppress=False, LW=False):
+              ion_switch=True, heat_switch=True, f_suppress=False, LW=False):
     """Top-hat halo evolution equations
  
     Parameters
@@ -635,10 +638,10 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, dists=0,
         n = n_TH(np.array(rs), rs_vir)
         dndt = dn_dt_TH(rs, rs_vir)
         return np.array([
-            dlog_xe_dz(xe, Tm, n, rs, DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+            dlog_xe_dz(xe, Tm, n, rs, DM_switch=DM_switch, ion_switch=ion_switch, DM_args=DM_args, f_suppress=f_suppress),
             dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
             dlog_Tm_dz(xe, xH2, Tm, n, dndt, rs, H2_cool_rate=H2_cool_rate, 
-                   DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress)
+                   DM_switch=DM_switch, heat_switch=heat_switch, DM_args=DM_args, f_suppress=f_suppress)
         ])
     
     # After virizialization.
@@ -646,28 +649,28 @@ def evol_eqns(rs, var, rs_vir, M, early=False, vir_switch=False, dists=0,
         xe, xH2, Tm, n = np.exp(var)
         dndt = dndt_dyn(
             xe, xH2, Tm, n, rs, H2_cool_rate='new', 
-            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress
+            DM_switch=DM_switch, heat_switch=heat_switch, DM_args=DM_args, f_suppress=f_suppress
         )
         # print(rs,
         #     dlog_xe_dz(xe, Tm, n, rs, 
-        #            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+        #            DM_switch=DM_switch, ion_switch=ion_switch, DM_args=DM_args, f_suppress=f_suppress),
         #     dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
         #     dlog_Tm_dz(xe, xH2, Tm, n, dndt, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
-        #            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+        #            DM_switch=DM_switch, heat_switch=heat_switch, DM_args=DM_args, f_suppress=f_suppress),
         #     dlog_n_dz(n, dndt, rs))
         return np.array([
             dlog_xe_dz(xe, Tm, n, rs, 
-                   DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+                   DM_switch=DM_switch, ion_switch=ion_switch, DM_args=DM_args, f_suppress=f_suppress),
             dlog_xH2_dz_at_rs(xe, xH2, Tm, n),
             dlog_Tm_dz(xe, xH2, Tm, n, dndt, rs, vir_switch=vir_switch, H2_cool_rate=H2_cool_rate, 
-                   DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress),
+                   DM_switch=DM_switch, heat_switch=heat_switch, DM_args=DM_args, f_suppress=f_suppress),
             dlog_n_dz(n, dndt, rs)
         ])
 
 # Integration, with the virialization conditions
 def halo_integrate(rs_vir, M_halo, init_log_H2, start_rs=3000., end_rs=5., early_rs=900., dists=0,
                   H2_form_rate='new', H2_cool_rate='new', DM_switch=False, DM_args=None, 
-                  f_suppress=False, LW=False):
+                  ion_switch=True, heat_switch=True, f_suppress=False, LW=False):
     """Get the evolution of a top-hat halo
  
     Parameters
@@ -723,7 +726,8 @@ def halo_integrate(rs_vir, M_halo, init_log_H2, start_rs=3000., end_rs=5., early
     #     because the ode system is stiff
     early_eqns = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, early=True, vir_switch=False, 
                                            dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
-                                           DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress)
+                                           DM_switch=DM_switch, DM_args=DM_args, 
+                                           ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress)
     early_soln = solve_ivp(early_eqns, [high_rs_list[0], high_rs_list[-1]], 
                            init_log_H2, t_eval=high_rs_list, rtol=1e-10, atol=1e-10)
     y_early = np.array([
@@ -740,7 +744,8 @@ def halo_integrate(rs_vir, M_halo, init_log_H2, start_rs=3000., end_rs=5., early
     init_cond = [np.log(phys.x_std(rs_list[0])), early_soln['y'][0,-1], np.log(phys.Tm_std(rs_list[0]))]
     halo_eqns = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, vir_switch=False, 
                                           dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
-                                          DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW)
+                                          DM_switch=DM_switch, DM_args=DM_args,  
+                                          ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress, LW=LW)
     halo_event = lambda rs, var: vir_event(rs, var, rs_vir, M_halo)
     halo_event.terminal = True
     halo_soln = solve_ivp(halo_eqns, [rs_list[0], rs_list[-1]], 
@@ -759,7 +764,8 @@ def halo_integrate(rs_vir, M_halo, init_log_H2, start_rs=3000., end_rs=5., early
     init_cond_vir = [halo_soln['y'][0,-1], halo_soln['y'][1,-1], log_T_next, np.log(y_mid[3,-1])]
     halo_eqns_vir = lambda rs, var: evol_eqns(rs, var, rs_vir, M_halo, vir_switch=True,
                                               dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate, 
-                                              DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW)
+                                              DM_switch=DM_switch, DM_args=DM_args,  
+                                              ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress, LW=LW)
     halo_soln_vir = solve_ivp(halo_eqns_vir, [rs_list_vir[0], rs_list_vir[-1]], 
                               init_cond_vir, t_eval=rs_list_vir, rtol=1e-10, atol=1e-10)
     # print(f"Is the integration after virialization good?  {halo_soln_vir['success']}")
@@ -793,7 +799,8 @@ def collapse_criterion(rs, Tm, rs_vir):
         return False
     
 def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new', 
-                    DM_switch=False, DM_args=None, f_suppress=False, LW=False):
+                    DM_switch=False, DM_args=None, 
+                    ion_switch=True, heat_switch=True, f_suppress=False, LW=False):
     M_halo_list = np.zeros_like(rs_vir_list, dtype=float)
     T_vir_list = np.zeros_like(rs_vir_list, dtype=float)
     
@@ -806,7 +813,8 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
         test_high, rs_vir_high = halo_integrate(
             rs_vir, M_halo_high, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
             dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
-            DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
+            DM_switch=DM_switch, DM_args=DM_args,
+            ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress, LW=LW
         )
         col_high = collapse_criterion(test_high['t'], test_high['y'][2], rs_vir_high)
         
@@ -817,7 +825,8 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
             test_low, rs_vir_low = halo_integrate(
                 rs_vir, M_halo_low, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
                 dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
-                DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
+                DM_switch=DM_switch, DM_args=DM_args, 
+                ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress, LW=LW
             )
         except:
             T_low *= 2
@@ -825,7 +834,8 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
             test_low, rs_vir_low = halo_integrate(
                 rs_vir, M_halo_low, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
                 dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
-                DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
+                DM_switch=DM_switch, DM_args=DM_args, 
+                ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress, LW=LW
             )
         
         col_low = collapse_criterion(test_low['t'], test_low['y'][2], rs_vir_low)
@@ -843,7 +853,8 @@ def shooting_scheme(rs_vir_list, dists=0, H2_form_rate='new', H2_cool_rate='new'
                 test_mid, rs_vir_mid = halo_integrate(
                     rs_vir, M_halo_mid, init_log_H2, start_rs=2000., end_rs=0.65*rs_vir,
                     dists=dists, H2_form_rate=H2_form_rate, H2_cool_rate=H2_cool_rate,
-                    DM_switch=DM_switch, DM_args=DM_args, f_suppress=f_suppress, LW=LW
+                    DM_switch=DM_switch, DM_args=DM_args, 
+                    ion_switch=ion_switch, heat_switch=heat_switch, f_suppress=f_suppress, LW=LW
                 )
                 col_mid = collapse_criterion(test_mid['t'], test_mid['y'][2], rs_vir_mid)
                 if col_mid:
